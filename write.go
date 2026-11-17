@@ -48,6 +48,25 @@ func (c *Conn) Write(ctx context.Context, typ MessageType, p []byte) error {
 	return nil
 }
 
+// WriteDeflated writes p as one message of type typ whose payload is already compressed
+// for permessage-deflate: the DEFLATE stream of the whole message ended by an empty stored
+// block, without that block's last four octets (RFC 7692 §7.2.1). RSV1 is set. p carries
+// no context, so it is valid on every connection whose writing side negotiated no context
+// takeover — and only there: on any other connection it returns an error and writes nothing.
+func (c *Conn) WriteDeflated(ctx context.Context, typ MessageType, p []byte) error {
+	if !c.flate() || c.msgWriter.flateContextTakeover() {
+		return errors.New("failed to write msg: permessage-deflate without context takeover not negotiated")
+	}
+	if err := c.msgWriter.reset(ctx, typ); err != nil {
+		return fmt.Errorf("failed to write msg: %w", err)
+	}
+	defer c.msgWriter.mu.unlock()
+	if _, err := c.writeFrame(ctx, true, true, c.msgWriter.opcode, p); err != nil {
+		return fmt.Errorf("failed to write msg: %w", err)
+	}
+	return nil
+}
+
 type msgWriter struct {
 	c *Conn
 
